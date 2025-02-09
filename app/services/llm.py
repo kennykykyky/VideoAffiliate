@@ -1,7 +1,7 @@
 import json
 import logging
 import re
-from typing import List
+from typing import List, Optional
 
 import g4f
 from loguru import logger
@@ -395,6 +395,43 @@ Please note that you must use English for generating video search terms; Chinese
 
     logger.success(f"completed: \n{search_terms}")
     return search_terms
+
+
+class LLMClient:
+    def __init__(self):
+        self.provider = config.app.get("llm_provider", "")
+        self._init_client()
+    
+    def _init_client(self):
+        """初始化对应的 LLM 客户端"""
+        if self.provider == "openai":
+            from app.services.llm_providers.openai import OpenAIProvider
+            self.client = OpenAIProvider()
+        elif self.provider == "deepseek":
+            from app.services.llm_providers.deepseek import DeepseekProvider
+            self.client = DeepseekProvider()
+        elif self.provider == "gemini":
+            from app.services.llm_providers.gemini import GeminiProvider
+            self.client = GeminiProvider()
+        else:
+            raise ValueError(f"Unsupported LLM provider: {self.provider}")
+    
+    def generate(self, prompt: str) -> str:
+        """生成文本"""
+        try:
+            return self.client.generate(prompt)
+        except Exception as e:
+            logger.error(f"LLM generation failed: {str(e)}")
+            raise
+
+_llm_client: Optional[LLMClient] = None
+
+def get_llm_client() -> LLMClient:
+    """获取 LLM 客户端单例"""
+    global _llm_client
+    if _llm_client is None:
+        _llm_client = LLMClient()
+    return _llm_client
 
 
 if __name__ == "__main__":
