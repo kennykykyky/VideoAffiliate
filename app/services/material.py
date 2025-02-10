@@ -1,6 +1,6 @@
 import os
 import random
-from typing import List
+from typing import List, Optional
 from urllib.parse import urlencode
 
 import requests
@@ -8,8 +8,12 @@ from loguru import logger
 from moviepy.video.io.VideoFileClip import VideoFileClip
 
 from app.config import config
-from app.models.schema import MaterialInfo, VideoAspect, VideoConcatMode
+from app.models.schema import VideoAspect, VideoConcatMode
+from app.models.material import MaterialInfo, MaterialType
 from app.utils import utils
+from app.services.midjourney.prompt import PromptGenerator
+from app.services.midjourney.client import ImageGenerationClient
+from app.services.llm import get_llm_client
 
 requested_count = 0
 
@@ -75,10 +79,12 @@ def search_videos_pexels(
                 w = int(video["width"])
                 h = int(video["height"])
                 if w == video_width and h == video_height:
-                    item = MaterialInfo()
-                    item.provider = "pexels"
-                    item.url = video["link"]
-                    item.duration = duration
+                    item = MaterialInfo(
+                        type=MaterialType.VIDEO,
+                        provider="pexels",
+                        url=video["link"],
+                        duration=duration
+                    )
                     video_items.append(item)
                     break
         return video_items
@@ -94,14 +100,13 @@ def search_videos_pixabay(
     video_aspect: VideoAspect = VideoAspect.portrait,
 ) -> List[MaterialInfo]:
     aspect = VideoAspect(video_aspect)
-
     video_width, video_height = aspect.to_resolution()
-
     api_key = get_api_key("pixabay_api_keys")
+    
     # Build URL
     params = {
         "q": search_term,
-        "video_type": "all",  # Accepted values: "all", "film", "animation"
+        "video_type": "all",
         "per_page": 50,
         "key": api_key,
     }
@@ -129,12 +134,13 @@ def search_videos_pixabay(
             for video_type in video_files:
                 video = video_files[video_type]
                 w = int(video["width"])
-                # h = int(video["height"])
                 if w >= video_width:
-                    item = MaterialInfo()
-                    item.provider = "pixabay"
-                    item.url = video["url"]
-                    item.duration = duration
+                    item = MaterialInfo(
+                        type=MaterialType.VIDEO,
+                        provider="pixabay",
+                        url=video["url"],
+                        duration=duration
+                    )
                     video_items.append(item)
                     break
         return video_items
@@ -259,6 +265,72 @@ def download_videos(
             logger.error(f"failed to download video: {utils.to_json(item)} => {str(e)}")
     logger.success(f"downloaded {len(video_paths)} videos")
     return video_paths
+
+
+class MaterialService:
+    def __init__(self):
+        self.llm_client = get_llm_client()
+        self.prompt_generator = PromptGenerator(self.llm_client)
+        self.image_client = ImageGenerationClient()
+    
+    async def generate_materials_from_script(
+        self,
+        script: str,
+        material_type: MaterialType,
+        output_dir: str,
+        video_aspect: VideoAspect = VideoAspect.portrait
+    ) -> List[MaterialInfo]:
+        """Generate materials based on script and material type"""
+        if material_type == MaterialType.MIDJOURNEY:
+            return await self._generate_image_materials(script, output_dir, video_aspect)
+        else:
+            # Handle other material types (video, etc.)
+            return []
+    
+    async def _generate_image_materials(
+        self,
+        script: str,
+        output_dir: str,
+        video_aspect: VideoAspect = VideoAspect.portrait
+    ) -> List[MaterialInfo]:
+        """Generate image materials from script using configured image provider"""
+        try:
+            # Generate prompts for each sentence in script
+            prompt_results = self.prompt_generator.generate_prompts_for_script(script)
+            
+            materials = []
+            os.makedirs(output_dir, exist_ok=True)
+            
+            for i, result in enumerate(prompt_results):
+                try:
+                    # Generate image from prompt with specified aspect ratio
+                    image_data = self.image_client.generate_image(result['prompt'], video_aspect)
+                    
+                    # Save image to file
+                    image_path = os.path.join(output_dir, f"image_{i}.png")
+                    with open(image_path, 'wb') as f:
+                        import base64
+                        f.write(base64.b64decode(image_data))
+                    
+                    # Create material info
+                    material = MaterialInfo(
+                        type=MaterialType.MIDJOURNEY,
+                        provider=config.app.get("image_provider", "stable-diffusion"),
+                        url=image_path,
+                        prompt=result['prompt'],
+                        sentence=result['sentence']
+                    )
+                    materials.append(material)
+                    
+                except Exception as e:
+                    logger.error(f"Error generating image {i}: {str(e)}")
+                    continue
+            
+            return materials
+            
+        except Exception as e:
+            logger.error(f"Error generating image materials: {str(e)}")
+            raise
 
 
 if __name__ == "__main__":

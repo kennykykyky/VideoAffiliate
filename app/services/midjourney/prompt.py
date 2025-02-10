@@ -1,11 +1,38 @@
 import json
-from typing import Dict, Any
+from typing import Dict, Any, List
 from loguru import logger
 
 class PromptGenerator:
     def __init__(self, llm_client):
         self.llm = llm_client
     
+    def split_script(self, script: str) -> List[str]:
+        """Split script into sentences based on line breaks"""
+        # Split by line breaks and filter out empty lines
+        sentences = [line.strip() for line in script.split('\n') if line.strip()]
+        logger.info(f"Split script into {len(sentences)} sentences")
+        return sentences
+    
+    def generate_prompts_for_script(self, script: str) -> List[Dict[str, Any]]:
+        """Generate prompts for all sentences in the script"""
+        sentences = self.split_script(script)
+        results = []
+        
+        for sentence in sentences:
+            try:
+                analysis = self.analyze_sentence(sentence)
+                prompt = self.generate_midjourney_prompt(analysis)
+                results.append({
+                    'sentence': sentence,
+                    'analysis': analysis,
+                    'prompt': prompt
+                })
+            except Exception as e:
+                logger.error(f"Error processing sentence '{sentence}': {str(e)}")
+                continue
+        
+        return results
+
     def analyze_sentence(self, sentence: str) -> Dict[str, Any]:
         """Analyze sentence and extract key visual elements"""
         prompt = (

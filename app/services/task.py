@@ -2,12 +2,14 @@ import math
 import os.path
 import re
 from os import path
+import asyncio
 
 from loguru import logger
 
 from app.config import config
 from app.models import const
 from app.models.schema import VideoConcatMode, VideoParams
+from app.models.material import MaterialInfo, MaterialType
 from app.services import llm, material, subtitle, video, voice
 from app.services import state as sm
 from app.utils import utils
@@ -123,36 +125,60 @@ def generate_subtitle(task_id, params, video_script, sub_maker, audio_file):
     return subtitle_path
 
 
-def get_video_materials(task_id, params, video_terms, audio_duration):
-    if params.video_source == "local":
-        logger.info("\n\n## preprocess local materials")
+def get_video_materials(
+    task_id, params, video_terms, audio_duration
+):
+    logger.info("\n\n## getting video materials")
+    
+    if params.video_source == "midjourney" or params.video_source == "local":
+        if params.video_materials:
+            # Use provided materials
+            materials = params.video_materials
+        else:
+            # Generate images from script
+            try:
+                material_service = material.MaterialService()
+                output_dir = utils.task_dir(task_id)
+                materials = asyncio.run(material_service.generate_materials_from_script(
+                    script=params.video_script,
+                    material_type=MaterialType.MIDJOURNEY,
+                    output_dir=output_dir,
+                    video_aspect=params.video_aspect
+                ))
+                if not materials:
+                    logger.error("no images generated from script")
+                    return None
+            except Exception as e:
+                logger.error(f"failed to generate images: {str(e)}")
+                return None
+        
+        # Preprocess images into video clips
         materials = video.preprocess_video(
-            materials=params.video_materials, clip_duration=params.video_clip_duration
+            materials=materials,
+            clip_duration=params.video_clip_duration
         )
-        if not materials:
-            sm.state.update_task(task_id, state=const.TASK_STATE_FAILED)
-            logger.error(
-                "no valid materials found, please check the materials and try again."
-            )
+        
+        downloaded_videos = [material.url for material in materials if material.url]
+        if not downloaded_videos:
+            logger.error("no valid video clips generated from images")
             return None
-        return [material_info.url for material_info in materials]
+            
+        return downloaded_videos
     else:
-        logger.info(f"\n\n## downloading videos from {params.video_source}")
-        downloaded_videos = material.download_videos(
+        # Original video download logic for Pexels/Pixabay
+        downloaded_videos = video.download_videos(
             task_id=task_id,
             search_terms=video_terms,
             source=params.video_source,
             video_aspect=params.video_aspect,
             video_contact_mode=params.video_concat_mode,
-            audio_duration=audio_duration * params.video_count,
+            audio_duration=audio_duration,
             max_clip_duration=params.video_clip_duration,
         )
         if not downloaded_videos:
-            sm.state.update_task(task_id, state=const.TASK_STATE_FAILED)
-            logger.error(
-                "failed to download videos, maybe the network is not available. if you are in China, please use a VPN."
-            )
+            logger.error("no videos downloaded")
             return None
+            
         return downloaded_videos
 
 
@@ -161,8 +187,11 @@ def generate_final_videos(
 ):
     final_video_paths = []
     combined_video_paths = []
+    # Use sequential mode for Stable Diffusion to maintain image order
     video_concat_mode = (
-        params.video_concat_mode if params.video_count == 1 else VideoConcatMode.random
+        VideoConcatMode.sequential if params.video_source == "midjourney"
+        else params.video_concat_mode if params.video_count == 1 
+        else VideoConcatMode.random
     )
     video_transition_mode = params.video_transition_mode
 

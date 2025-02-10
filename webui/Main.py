@@ -465,128 +465,103 @@ with left_panel:
         params.video_language = video_languages[selected_index][1]
 
         if st.button(
-            tr("Generate Video Script and Keywords"), key="auto_generate_script"
+            tr("Generate Video Script"), key="auto_generate_script"
         ):
-            with st.spinner(tr("Generating Video Script and Keywords")):
+            with st.spinner(tr("Generating Video Script")):
                 script = llm.generate_script(
                     video_subject=params.video_subject, language=params.video_language
                 )
-                terms = llm.generate_terms(params.video_subject, script)
                 if "Error: " in script:
                     st.error(tr(script))
-                elif "Error: " in terms:
-                    st.error(tr(terms))
                 else:
                     st.session_state["video_script"] = script
-                    st.session_state["video_terms"] = ", ".join(terms)
+
         params.video_script = st.text_area(
             tr("Video Script"), value=st.session_state["video_script"], height=280
-        )
-        if st.button(tr("Generate Video Keywords"), key="auto_generate_terms"):
-            if not params.video_script:
-                st.error(tr("Please Enter the Video Subject"))
-                st.stop()
-
-            with st.spinner(tr("Generating Video Keywords")):
-                terms = llm.generate_terms(params.video_subject, params.video_script)
-                if "Error: " in terms:
-                    st.error(tr(terms))
-                else:
-                    st.session_state["video_terms"] = ", ".join(terms)
-
-        params.video_terms = st.text_area(
-            tr("Video Keywords"), value=st.session_state["video_terms"]
         )
 
 with middle_panel:
     with st.container(border=True):
         st.write(tr("Video Settings"))
-        video_concat_modes = [
-            (tr("Sequential"), "sequential"),
-            (tr("Random"), "random"),
-        ]
+        
+        # Add video source selection
         video_sources = [
-            (tr("Pexels"), "pexels"),
-            (tr("Pixabay"), "pixabay"),
-            (tr("Local file"), "local"),
-            (tr("TikTok"), "douyin"),
-            (tr("Bilibili"), "bilibili"),
-            (tr("Xiaohongshu"), "xiaohongshu"),
+            (tr("Stable Diffusion Images"), "midjourney"),  # Default option first
+            (tr("Pexels Videos"), "pexels"),
+            (tr("Pixabay Videos"), "pixabay"),
+            (tr("Local Files"), "local"),
         ]
-
-        saved_video_source_name = config.app.get("video_source", "pexels")
-        saved_video_source_index = [v[1] for v in video_sources].index(
-            saved_video_source_name
-        )
-
         selected_index = st.selectbox(
             tr("Video Source"),
             options=range(len(video_sources)),
             format_func=lambda x: video_sources[x][0],
-            index=saved_video_source_index,
+            index=0,  # Default to Midjourney
         )
         params.video_source = video_sources[selected_index][1]
-        config.app["video_source"] = params.video_source
-
-        if params.video_source == "local":
-            _supported_types = FILE_TYPE_VIDEOS + FILE_TYPE_IMAGES
-            uploaded_files = st.file_uploader(
-                "Upload Local Files",
-                type=["mp4", "mov", "avi", "flv", "mkv", "jpg", "jpeg", "png"],
-                accept_multiple_files=True,
+        
+        # Show API key input fields based on selection
+        if params.video_source == "pexels":
+            pexels_api_key = get_keys_from_config("pexels_api_keys")
+            pexels_api_key = st.text_input(
+                tr("Pexels API Key"), 
+                value=pexels_api_key, 
+                type="password",
+                key="pexels_api_key_input"
             )
-
-        selected_index = st.selectbox(
-            tr("Video Concat Mode"),
-            index=1,
-            options=range(
-                len(video_concat_modes)
-            ),  # Use the index as the internal option value
-            format_func=lambda x: video_concat_modes[x][
-                0
-            ],  # The label is displayed to the user
-        )
-        params.video_concat_mode = VideoConcatMode(
-            video_concat_modes[selected_index][1]
-        )
-
-        # 视频转场模式
-        video_transition_modes = [
-            (tr("None"), VideoTransitionMode.none.value),
-            (tr("Shuffle"), VideoTransitionMode.shuffle.value),
-            (tr("FadeIn"), VideoTransitionMode.fade_in.value),
-            (tr("FadeOut"), VideoTransitionMode.fade_out.value),
-            (tr("SlideIn"), VideoTransitionMode.slide_in.value),
-            (tr("SlideOut"), VideoTransitionMode.slide_out.value),
-        ]
-        selected_index = st.selectbox(
-            tr("Video Transition Mode"),
-            options=range(len(video_transition_modes)),
-            format_func=lambda x: video_transition_modes[x][0],
-            index=0,
-        )
-        params.video_transition_mode = VideoTransitionMode(
-            video_transition_modes[selected_index][1]
-        )
-
+            save_keys_to_config("pexels_api_keys", pexels_api_key)
+        elif params.video_source == "pixabay":
+            pixabay_api_key = get_keys_from_config("pixabay_api_keys")
+            pixabay_api_key = st.text_input(
+                tr("Pixabay API Key"), 
+                value=pixabay_api_key, 
+                type="password",
+                key="pixabay_api_key_input"
+            )
+            save_keys_to_config("pixabay_api_keys", pixabay_api_key)
+        elif params.video_source == "local":
+            uploaded_files = st.file_uploader(
+                tr("Upload Images/Videos"), 
+                type=FILE_TYPE_IMAGES + FILE_TYPE_VIDEOS,
+                accept_multiple_files=True,
+                key="local_files_uploader"
+            )
+            # Only show clip duration for local files
+            params.video_clip_duration = st.selectbox(
+                tr("Clip Duration (seconds per image)"), 
+                options=[2, 3, 4, 5, 6, 7, 8, 9, 10], 
+                index=3,
+                key="clip_duration_select"
+            )
+        
         video_aspect_ratios = [
             (tr("Portrait"), VideoAspect.portrait.value),
             (tr("Landscape"), VideoAspect.landscape.value),
         ]
         selected_index = st.selectbox(
             tr("Video Ratio"),
-            options=range(
-                len(video_aspect_ratios)
-            ),  # Use the index as the internal option value
-            format_func=lambda x: video_aspect_ratios[x][
-                0
-            ],  # The label is displayed to the user
+            options=range(len(video_aspect_ratios)),
+            format_func=lambda x: video_aspect_ratios[x][0],
         )
         params.video_aspect = VideoAspect(video_aspect_ratios[selected_index][1])
 
-        params.video_clip_duration = st.selectbox(
-            tr("Clip Duration"), options=[2, 3, 4, 5, 6, 7, 8, 9, 10], index=1
+        # Video transition effects
+        video_transition_modes = [
+            (tr("None"), VideoTransitionMode.none.value),
+            (tr("FadeIn"), VideoTransitionMode.fade_in.value),
+            (tr("FadeOut"), VideoTransitionMode.fade_out.value),
+            (tr("SlideIn"), VideoTransitionMode.slide_in.value),
+            (tr("SlideOut"), VideoTransitionMode.slide_out.value),
+        ]
+        selected_index = st.selectbox(
+            tr("Transition Effect"),
+            options=range(len(video_transition_modes)),
+            format_func=lambda x: video_transition_modes[x][0],
+            index=1,  # Default to FadeIn
         )
+        params.video_transition_mode = VideoTransitionMode(
+            video_transition_modes[selected_index][1]
+        )
+
         params.video_count = st.selectbox(
             tr("Number of Videos Generated Simultaneously"),
             options=[1, 2, 3, 4, 5],
@@ -781,22 +756,25 @@ if start_button:
         scroll_to_bottom()
         st.stop()
 
-    if params.video_source not in ["pexels", "pixabay", "local"]:
-        st.error(tr("Please Select a Valid Video Source"))
-        scroll_to_bottom()
-        st.stop()
-
+    # Validate video source requirements
     if params.video_source == "pexels" and not config.app.get("pexels_api_keys", ""):
         st.error(tr("Please Enter the Pexels API Key"))
         scroll_to_bottom()
         st.stop()
-
-    if params.video_source == "pixabay" and not config.app.get("pixabay_api_keys", ""):
+    elif params.video_source == "pixabay" and not config.app.get("pixabay_api_keys", ""):
         st.error(tr("Please Enter the Pixabay API Key"))
         scroll_to_bottom()
         st.stop()
+    elif params.video_source == "midjourney" and not config.app.get("stable_diffusion_api_key", ""):
+        st.error(tr("Please Configure Stable Diffusion API Key in config.toml"))
+        scroll_to_bottom()
+        st.stop()
+    elif params.video_source == "local" and not uploaded_files:
+        st.error(tr("Please Upload at Least One Image or Video File"))
+        scroll_to_bottom()
+        st.stop()
 
-    if uploaded_files:
+    if params.video_source == "local" and uploaded_files:
         local_videos_dir = utils.storage_dir("local_videos", create=True)
         for file in uploaded_files:
             file_path = os.path.join(local_videos_dir, f"{file.file_id}_{file.name}")
