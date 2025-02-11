@@ -29,11 +29,19 @@ class StableDiffusionProvider(ImageGenerationProvider):
             "Accept": "application/json"
         }
         
+        # Calculate dimensions based on aspect ratio
+        if aspect == VideoAspect.portrait:  # 9:16
+            width, height = 768, 1344  # Exact 9:16 ratio
+        elif aspect == VideoAspect.landscape:  # 16:9
+            width, height = 1344, 768  # Exact 16:9 ratio
+        else:  # square 1:1
+            width, height = 1024, 1024
+        
         payload = {
             "text_prompts": [{"text": prompt}],
             "cfg_scale": 7,
-            "height": 1024,
-            "width": 1024,
+            "height": height,
+            "width": width,
             "samples": 1,
             "steps": 50,
         }
